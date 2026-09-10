@@ -99,17 +99,18 @@
 
     input, select, textarea {
       width: 100%;
-      padding: 7px 10px;
+      padding: 9px 12px;
       border: 1px solid var(--border);
       border-radius: 7px;
-      font-size: 0.9rem;
-      background: #fafaf8;
-      color: var(--text);
+      font-size: 1rem;
+      font-weight: 500;
+      background: #fff;
+      color: #1a1a1a;
       transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
       font-family: inherit;
     }
 
-    textarea { resize: vertical; min-height: 56px; }
+    textarea { resize: vertical; min-height: 56px; font-weight: 400; }
 
     input:focus, select:focus, textarea:focus {
       outline: none;
@@ -118,7 +119,51 @@
       box-shadow: 0 0 0 3px rgba(91, 138, 114, 0.16);
     }
 
-    input::placeholder, textarea::placeholder { color: #b0aea9; }
+    input::placeholder, textarea::placeholder { color: #9a9893; font-weight: 400; }
+
+    .upcoming-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 8px;
+      background: #faf9f7;
+    }
+    .upcoming-main {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 16px;
+    }
+    .upcoming-date {
+      font-weight: 700;
+      font-size: 1.05rem;
+    }
+    .upcoming-time {
+      font-weight: 600;
+      color: var(--text);
+    }
+    .upcoming-details {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+      font-size: 0.9rem;
+      display: none;
+    }
+    .upcoming-details.open { display: block; }
+    .upcoming-details dl {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 6px 12px;
+      margin: 0;
+    }
+    .upcoming-details dt {
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    .upcoming-details dd {
+      margin: 0;
+      font-weight: 500;
+    }
 
     .span-2 { grid-column: span 2; }
     .span-4 { grid-column: 1 / -1; }
@@ -239,32 +284,21 @@
       opacity: 1;
     }
 
-    .sync-indicator {
-      display: none;
-      text-align: center;
-      font-size: 0.8rem;
-      color: var(--muted);
-      background: var(--accent-soft);
-      border: 1px solid #c5d9cc;
-      border-radius: 8px;
-      padding: 6px 10px;
-      margin-bottom: 12px;
-    }
-    .sync-indicator.show { display: block; }
-
     .tabs {
       display: flex;
-      gap: 2px;
+      flex-wrap: nowrap;
+      gap: 0;
       margin-bottom: 16px;
       border-bottom: 1px solid var(--border);
-      flex-wrap: wrap;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
     }
 
     .tab-btn {
-      padding: 9px 14px;
+      padding: 9px 12px;
       border: none;
       background: transparent;
-      font-size: 0.88rem;
+      font-size: 0.86rem;
       font-weight: 500;
       color: var(--muted);
       cursor: pointer;
@@ -272,6 +306,7 @@
       margin-bottom: -1px;
       transition: color var(--transition), border-color var(--transition);
       white-space: nowrap;
+      flex-shrink: 0;
     }
     .tab-btn:hover { color: var(--text); }
     .tab-btn.active {
@@ -650,7 +685,6 @@
 <body>
   <h1>Бронирование зала</h1>
   <p class="subtitle">Запись банкетов и мероприятий · Ресторан «Посейдон»</p>
-  <div class="sync-indicator" id="syncIndicator">Загрузка данных…</div>
 
   <!-- Брони + информация — один блок сверху -->
   <div class="card">
@@ -658,6 +692,7 @@
       <button type="button" class="tab-btn active" data-tab="upcoming">Ближайшие</button>
       <button type="button" class="tab-btn" data-tab="all">Все брони</button>
       <button type="button" class="tab-btn" data-tab="info">Информация</button>
+      <button type="button" class="tab-btn" data-tab="archive">Архив</button>
     </div>
 
     <div class="tab-panel active" id="panel-upcoming">
@@ -703,6 +738,10 @@
           <label for="filterDay">День</label>
           <input type="number" id="filterDay" min="1" max="31" placeholder="все">
         </div>
+        <div>
+          <label for="filterSearch">Поиск (имя / телефон)</label>
+          <input type="text" id="filterSearch" placeholder="Иван..." maxlength="60">
+        </div>
         <button type="button" class="btn btn-secondary" id="exportBtn" style="align-self: flex-end; padding: 6px 12px;">Экспорт CSV</button>
       </div>
       <div id="listAll">
@@ -736,6 +775,17 @@
         <div class="info-content">
           <p>В основном зале после <span class="info-tag">22:00</span> шуметь нежелательно — рядом постояльцы.</p>
         </div>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="panel-archive">
+      <h2 style="margin-top:0">
+        Архив
+        <span class="count" id="countArchive"></span>
+      </h2>
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:12px;">Удалённые брони и мероприятия, которые уже прошли.</p>
+      <div id="listArchive">
+        <div class="empty">Архив пуст</div>
       </div>
     </div>
   </div>
@@ -892,90 +942,12 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script>
     (function () {
       'use strict';
 
-      // ——— Общая база данных (Supabase) ———
-      // Ключ ниже — публичный (publishable) ключ, он и должен быть в клиентском коде.
-      // Доступ на чтение/запись открыт всем по ссылке (без логина) — так и было задумано.
-      const SUPABASE_URL = 'https://nyjbrklsgiwvfudmhpon.supabase.co';
-      const SUPABASE_KEY = 'sb_publishable_5XgRHFYkg4SmKE8A97ZkZg_OVzSoS7Q';
-      const TABLE = 'bookings';
-      const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-
+      const STORAGE_KEY = 'venue_bookings_v1';
       const MAX_BOOKINGS = 2000;
-
-      let bookingsCache = [];
-
-      function setSyncIndicator(text, show) {
-        const el = document.getElementById('syncIndicator');
-        if (!el) return;
-        el.textContent = text || '';
-        el.classList.toggle('show', !!show);
-      }
-
-      // Синхронный доступ к текущему локальному кэшу (весь остальной код это и ожидает)
-      function loadBookings() {
-        return bookingsCache;
-      }
-
-      // Полная загрузка с сервера
-      async function fetchAllFromServer() {
-        setSyncIndicator('Загрузка данных…', true);
-        const { data, error } = await sb.from(TABLE).select('data').order('updated_at', { ascending: true });
-        if (error) {
-          console.error('Ошибка загрузки из Supabase:', error);
-          setSyncIndicator('Нет соединения с сервером. Показаны последние загруженные данные.', true);
-          return;
-        }
-        bookingsCache = (data || [])
-          .map(r => r.data)
-          .filter(b => b && typeof b === 'object' && b.id && b.date);
-        setSyncIndicator('', false);
-        renderAllLists();
-        if (typeof renderMenuDishes === 'function') renderMenuDishes();
-      }
-
-      // Запись: обновляем локальный кэш сразу (мгновенный отклик в интерфейсе),
-      // а изменения на сервер отправляем в фоне и синхронизируем с остальными вкладками через realtime.
-      function saveBookings(list) {
-        if (!Array.isArray(list)) return false;
-        const safe = list.slice(0, MAX_BOOKINGS);
-
-        const prevIds = new Set(bookingsCache.map(b => b.id));
-        const nextIds = new Set(safe.map(b => b.id));
-        const toDelete = [...prevIds].filter(id => !nextIds.has(id));
-
-        bookingsCache = safe;
-
-        (async () => {
-          try {
-            if (safe.length) {
-              const rows = safe.map(b => ({ id: b.id, data: b, updated_at: new Date().toISOString() }));
-              const { error: upsertError } = await sb.from(TABLE).upsert(rows, { onConflict: 'id' });
-              if (upsertError) throw upsertError;
-            }
-            if (toDelete.length) {
-              const { error: delError } = await sb.from(TABLE).delete().in('id', toDelete);
-              if (delError) throw delError;
-            }
-          } catch (e) {
-            console.error('Ошибка синхронизации с сервером:', e);
-            showToast('Не удалось сохранить на сервере — проверьте интернет');
-          }
-        })();
-
-        return true;
-      }
-
-      // Realtime: если бронь добавил/изменил/удалил кто-то другой — обновляем у себя
-      sb.channel('bookings-changes')
-        .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, function () {
-          fetchAllFromServer();
-        })
-        .subscribe();
 
       // ——— Меню из фото ———
       const MENU_DATA = [
@@ -1022,6 +994,62 @@
 
       // qty state: key = catIndex_itemIndex
       const qtyState = {};
+
+      // ——— Хранение броней ———
+      function loadBookings() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (!raw) return [];
+          const data = JSON.parse(raw);
+          if (!Array.isArray(data)) return [];
+          return data.filter(b => b && typeof b === 'object' && b.id && b.date);
+        } catch (e) {
+          console.error('Ошибка чтения:', e);
+          return [];
+        }
+      }
+
+      function isDeleted(b) {
+        return !!(b && b.deleted);
+      }
+
+      function isPast(b) {
+        if (!b || !b.date) return false;
+        const today = todayISO();
+        if (b.date < today) return true;
+        if (b.date > today) return false;
+        // В день брони уходит в архив после 23:00
+        return new Date().getHours() >= 23;
+      }
+
+      function activeBookings() {
+        return loadBookings().filter(b => !isDeleted(b) && !isPast(b));
+      }
+
+      function archiveBookings() {
+        return loadBookings()
+          .filter(b => isDeleted(b) || isPast(b))
+          .sort((a, b) => ((b.date || '') + (b.time || '')).localeCompare((a.date || '') + (a.time || '')));
+      }
+
+      function saveBookings(list) {
+        if (!Array.isArray(list)) return false;
+        try {
+          const safe = list.slice(0, MAX_BOOKINGS);
+          const json = JSON.stringify(safe);
+          localStorage.setItem(STORAGE_KEY, json);
+          if (localStorage.getItem(STORAGE_KEY) !== json) throw new Error('Проверка не прошла');
+          return true;
+        } catch (e) {
+          console.error('Ошибка сохранения:', e);
+          if (e.name === 'QuotaExceededError' || e.code === 22) {
+            alert('Не удалось сохранить: закончилось место в браузере.\nУдалите старые брони или скачайте резервную копию.');
+          } else {
+            alert('Не удалось сохранить данные. Попробуйте ещё раз.');
+          }
+          return false;
+        }
+      }
 
       function showToast(text) {
         const t = document.getElementById('toast');
@@ -1283,7 +1311,7 @@
         pendingMenuAttach = data;
         const panel = document.getElementById('attachTargetPanel');
         const listEl = document.getElementById('attachBookingList');
-        const bookings = loadBookings()
+        const bookings = activeBookings()
           .filter(b => b.occasion !== 'Поминки')
           .sort((a, b) => ((b.date || '') + (b.time || '')).localeCompare((a.date || '') + (a.time || '')));
 
@@ -1313,7 +1341,7 @@
         document.querySelectorAll('#topTabs .tab-btn').forEach(b => {
           b.classList.toggle('active', b.dataset.tab === 'upcoming');
         });
-        ['panel-upcoming', 'panel-all', 'panel-info'].forEach(id => {
+        ['panel-upcoming', 'panel-all', 'panel-info', 'panel-archive'].forEach(id => {
           const p = document.getElementById(id);
           if (p) p.classList.toggle('active', id === 'panel-upcoming');
         });
@@ -1466,46 +1494,74 @@
       }
 
       // ——— Таблица броней ———
-      function buildTable(list) {
-        if (!list.length) return '<div class="empty">Нет броней</div>';
+      function buildBookingCards(list, idPrefix, opts) {
+        opts = opts || {};
+        if (!list.length) return '<div class="empty">' + (opts.emptyText || 'Нет броней') + '</div>';
+        const prefix = idPrefix || 'bk';
+        const isArchive = !!opts.archive;
 
-        let html = '<div class="table-wrap"><table><thead><tr>' +
-          '<th>Повод</th><th>Дата</th><th>Время</th><th>Клиент</th>' +
-          '<th>Люди</th><th>Зал</th><th>Телефон</th><th>Меню</th><th>Горячее</th>' +
-          '<th>Предоплата</th><th>Заметка</th><th></th></tr></thead><tbody>';
-
-        list.forEach(b => {
-          let menuText = b.menu || '—';
+        return list.map(function (b) {
+          let menuLine = b.menu || '—';
           if (b.menuItems && b.menuItems.length) {
-            menuText = (b.menu || '') + (b.menu ? ' · ' : '') + b.menuItems.length + ' поз.';
+            menuLine = (b.menu ? b.menu + ' · ' : '') + b.menuItems.length + ' поз.';
+            if (b.menuTotal) menuLine += ' · ' + money(b.menuTotal);
           }
-          html += '<tr data-id="' + escapeHtml(b.id) + '">' +
-            '<td>' + (b.occasion ? '<span class="badge ' + (b.occasion === 'Поминки' ? '' : 'badge-muted') + '">' + escapeHtml(b.occasion) + '</span>' : '—') + '</td>' +
-            '<td class="date-cell">' + formatDate(b.date) + '</td>' +
-            '<td>' + (b.time || '—') + '</td>' +
-            '<td>' + (escapeHtml(b.clientName) || '—') + '</td>' +
-            '<td>' + (b.people || '—') + '</td>' +
-            '<td>' + (escapeHtml(b.hall) || '—') + '</td>' +
-            '<td>' + (escapeHtml(b.phone) || '—') + '</td>' +
-            '<td>' + (menuText !== '—' ? '<span class="badge">' + escapeHtml(menuText) + '</span>' : '—') + '</td>' +
-            '<td>' + (escapeHtml(b.hot) || '—') + '</td>' +
-            '<td>' + formatMoney(b.prepay) + '</td>' +
-            '<td class="note-cell" title="' + escapeHtml(b.comment || '') + '">' + (escapeHtml(b.comment) || '—') + '</td>' +
-            '<td class="actions-cell">' +
-              '<button type="button" class="btn btn-edit btn-edit-row">Изменить</button>' +
-              '<button type="button" class="btn btn-danger btn-delete">Удалить</button>' +
-            '</td></tr>';
-        });
+          const detailsId = prefix + '_' + b.id;
+          let mark = '';
+          if (isArchive) {
+            if (isDeleted(b)) {
+              mark = '<span class="badge st-cancel">Удалено</span>';
+            } else if (isPast(b)) {
+              mark = '<span class="badge st-prepay">Окончание мероприятия</span>';
+            }
+          }
 
-        return html + '</tbody></table></div>';
+          let actions = '';
+          if (isArchive) {
+            if (isDeleted(b)) {
+              actions =
+                '<button type="button" class="btn btn-edit btn-restore" data-id="' + escapeHtml(b.id) + '">Восстановить</button> ' +
+                '<button type="button" class="btn btn-danger btn-purge" data-id="' + escapeHtml(b.id) + '">Удалить навсегда</button>';
+            } else {
+              actions =
+                '<button type="button" class="btn btn-edit btn-edit-row" data-id="' + escapeHtml(b.id) + '">Изменить</button> ' +
+                '<button type="button" class="btn btn-danger btn-delete" data-id="' + escapeHtml(b.id) + '">Удалить</button>';
+            }
+          } else {
+            actions =
+              '<button type="button" class="btn btn-edit btn-edit-row" data-id="' + escapeHtml(b.id) + '">Изменить</button> ' +
+              '<button type="button" class="btn btn-danger btn-delete" data-id="' + escapeHtml(b.id) + '">Удалить</button>';
+          }
+
+          return '<div class="upcoming-card" data-id="' + escapeHtml(b.id) + '">' +
+            '<div class="upcoming-main">' +
+              '<span class="upcoming-date">' + formatDate(b.date) + '</span>' +
+              '<span class="upcoming-time">' + (b.time || '—') + '</span>' +
+              (b.occasion ? '<span class="badge ' + (b.occasion === 'Поминки' ? '' : 'badge-muted') + '">' + escapeHtml(b.occasion) + '</span>' : '') +
+              mark +
+              '<button type="button" class="btn btn-secondary btn-sm btn-toggle-details" data-target="' + detailsId + '">Показать всю информацию</button>' +
+            '</div>' +
+            '<div class="upcoming-details" id="' + detailsId + '">' +
+              '<dl>' +
+                '<dt>Клиент</dt><dd>' + (escapeHtml(b.clientName) || '—') + '</dd>' +
+                '<dt>Людей</dt><dd>' + (b.people || '—') + '</dd>' +
+                '<dt>Зал / стол</dt><dd>' + (escapeHtml(b.hall) || '—') + '</dd>' +
+                '<dt>Телефон</dt><dd>' + (escapeHtml(b.phone) || '—') + '</dd>' +
+                '<dt>Меню</dt><dd>' + escapeHtml(menuLine) + '</dd>' +
+                '<dt>Горячее</dt><dd>' + (escapeHtml(b.hot) || '—') + (b.hotTime ? ' · подача ' + b.hotTime : '') + '</dd>' +
+                '<dt>Предоплата</dt><dd>' + formatMoney(b.prepay) + '</dd>' +
+                '<dt>Заметка</dt><dd>' + (escapeHtml(b.comment) || '—') + '</dd>' +
+              '</dl>' +
+              '<div style="margin-top:10px;">' + actions + '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
       }
-
-      let upcomingExpanded = false;
 
       function renderUpcoming() {
         const today = todayISO();
         const limit = addDaysISO(31);
-        const list = loadBookings()
+        const list = activeBookings()
           .filter(b => b.date >= today && b.date <= limit)
           .sort((a, b) => ((a.date || '') + (a.time || '')).localeCompare((b.date || '') + (b.time || '')));
 
@@ -1518,18 +1574,14 @@
           return;
         }
 
-        if (list.length === 1 || upcomingExpanded) {
-          document.getElementById('listUpcoming').innerHTML = buildTable(list);
-          if (list.length > 1) {
-            toggleBtn.classList.remove('hidden');
-            toggleBtn.textContent = 'Свернуть';
-          } else {
-            toggleBtn.classList.add('hidden');
-          }
-        } else {
-          document.getElementById('listUpcoming').innerHTML = buildTable([list[0]]);
+        const show = (list.length === 1 || upcomingExpanded) ? list : [list[0]];
+        document.getElementById('listUpcoming').innerHTML = buildBookingCards(show, 'up');
+
+        if (list.length > 1) {
           toggleBtn.classList.remove('hidden');
-          toggleBtn.textContent = 'Показать все ближайшие (' + list.length + ')';
+          toggleBtn.textContent = upcomingExpanded ? 'Свернуть' : 'Показать все ближайшие (' + list.length + ')';
+        } else {
+          toggleBtn.classList.add('hidden');
         }
       }
 
@@ -1538,52 +1590,140 @@
         renderUpcoming();
       });
 
+
+
       function renderAll() {
         const year = document.getElementById('filterYear').value;
         const month = document.getElementById('filterMonth').value;
         const dayInput = document.getElementById('filterDay').value.trim();
         const day = dayInput ? dayInput.padStart(2, '0') : '';
-        const list = loadBookings()
+        const q = (document.getElementById('filterSearch').value || '').trim().toLowerCase();
+        const list = activeBookings()
           .filter(b => {
             if (year && !b.date.startsWith(year)) return false;
             if (month && !b.date.startsWith(year + '-' + month)) return false;
             if (day && getDay(b.date) !== day) return false;
+            if (q) {
+              const name = (b.clientName || '').toLowerCase();
+              const phone = (b.phone || '').toLowerCase();
+              const hall = (b.hall || '').toLowerCase();
+              if (name.indexOf(q) === -1 && phone.indexOf(q) === -1 && hall.indexOf(q) === -1) return false;
+            }
             return true;
           })
           .sort((a, b) => ((a.date || '') + (a.time || '')).localeCompare((b.date || '') + (b.time || '')));
 
         document.getElementById('countAll').textContent = list.length ? '(' + list.length + ')' : '';
-        document.getElementById('listAll').innerHTML = list.length ? buildTable(list) : '<div class="empty">Нет броней по выбранным фильтрам</div>';
+        document.getElementById('listAll').innerHTML = list.length ? buildBookingCards(list, 'all') : '<div class="empty">Нет броней по выбранным фильтрам</div>';
+      }
+
+      function renderArchive() {
+        const list = archiveBookings();
+        const el = document.getElementById('countArchive');
+        if (el) el.textContent = list.length ? '(' + list.length + ')' : '';
+        const box = document.getElementById('listArchive');
+        if (box) {
+          box.innerHTML = list.length
+            ? buildBookingCards(list, 'arch', { archive: true, emptyText: 'Архив пуст' })
+            : '<div class="empty">Архив пуст</div>';
+        }
       }
 
       function renderAllLists() {
         renderUpcoming();
         renderAll();
+        renderArchive();
       }
 
       document.addEventListener('click', function (e) {
+        const toggleBtn = e.target.closest('.btn-toggle-details');
+        if (toggleBtn) {
+          e.preventDefault();
+          const box = document.getElementById(toggleBtn.dataset.target);
+          if (!box) return;
+          const open = box.classList.toggle('open');
+          toggleBtn.textContent = open ? 'Скрыть информацию' : 'Показать всю информацию';
+          return;
+        }
+
         const delBtn = e.target.closest('.btn-delete');
         if (delBtn) {
-          const row = delBtn.closest('tr');
-          const id = row && row.dataset.id;
-          if (!id) return;
-          if (!confirm('Вы точно хотите удалить запись?')) return;
-          const next = loadBookings().filter(x => x.id !== id);
-          if (saveBookings(next)) {
-            if (document.getElementById('editId').value === id) clearEditMode();
+          e.preventDefault();
+          e.stopPropagation();
+          const id = delBtn.getAttribute('data-id');
+          if (!id) {
+            alert('Не удалось определить бронь');
+            return;
+          }
+          if (!confirm('Вы точно хотите удалить запись?\nОна попадёт в архив.')) return;
+          const list = loadBookings().map(function (x) {
+            if (String(x.id) === String(id)) {
+              return Object.assign({}, x, { deleted: true, deletedAt: new Date().toISOString() });
+            }
+            return x;
+          });
+          if (saveBookings(list)) {
+            if (String(document.getElementById('editId').value) === String(id)) clearEditMode();
             renderAllLists();
-            showToast('Запись удалена');
+            showToast('Бронь перенесена в архив');
+          }
+          return;
+        }
+
+        const restoreBtn = e.target.closest('.btn-restore');
+        if (restoreBtn) {
+          e.preventDefault();
+          const id = restoreBtn.getAttribute('data-id');
+          if (!id) return;
+          const list = loadBookings().map(function (x) {
+            if (String(x.id) === String(id)) {
+              const copy = Object.assign({}, x);
+              delete copy.deleted;
+              delete copy.deletedAt;
+              return copy;
+            }
+            return x;
+          });
+          if (saveBookings(list)) {
+            renderAllLists();
+            showToast('Бронь восстановлена');
+          }
+          return;
+        }
+
+        const purgeBtn = e.target.closest('.btn-purge');
+        if (purgeBtn) {
+          e.preventDefault();
+          const id = purgeBtn.getAttribute('data-id');
+          if (!id) return;
+          if (!confirm('Удалить запись навсегда? Это нельзя отменить.')) return;
+          const next = loadBookings().filter(x => String(x.id) !== String(id));
+          if (saveBookings(next)) {
+            renderAllLists();
+            showToast('Запись удалена навсегда');
           }
           return;
         }
 
         const editBtn = e.target.closest('.btn-edit-row');
         if (editBtn) {
-          const row = editBtn.closest('tr');
-          const id = row && row.dataset.id;
+          e.preventDefault();
+          const id = editBtn.getAttribute('data-id');
           if (!id) return;
-          const booking = loadBookings().find(x => x.id === id);
-          if (booking) setEditMode(booking);
+          const booking = loadBookings().find(x => String(x.id) === String(id));
+          if (booking) {
+            const formCard = document.getElementById('formCard');
+            if (formCard) formCard.classList.remove('hidden');
+            // показать вкладку ближайшие, чтобы форма была видна
+            document.querySelectorAll('#topTabs .tab-btn').forEach(b => {
+              b.classList.toggle('active', b.dataset.tab === 'upcoming');
+            });
+            ['panel-upcoming', 'panel-all', 'panel-info', 'panel-archive'].forEach(pid => {
+              const p = document.getElementById(pid);
+              if (p) p.classList.toggle('active', pid === 'panel-upcoming');
+            });
+            setEditMode(booking);
+          }
         }
       });
 
@@ -1604,7 +1744,7 @@
         if (!btn || !btn.dataset.tab) return;
         document.querySelectorAll('#topTabs .tab-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        ['panel-upcoming', 'panel-all', 'panel-info'].forEach(id => {
+        ['panel-upcoming', 'panel-all', 'panel-info', 'panel-archive'].forEach(id => {
           const p = document.getElementById(id);
           if (p) p.classList.remove('active');
         });
@@ -1639,7 +1779,7 @@
       function findConflicts(hall, date, excludeId) {
         if (!hall || !date) return [];
         const hallNorm = hall.trim().toLowerCase();
-        return loadBookings().filter(b => {
+        return activeBookings().filter(b => {
           if (excludeId && b.id === excludeId) return false;
           if (!b.hall || !b.date) return false;
           return b.date === date && b.hall.trim().toLowerCase() === hallNorm;
@@ -1717,6 +1857,7 @@
       document.getElementById('filterYear').addEventListener('change', renderAll);
       document.getElementById('filterMonth').addEventListener('change', renderAll);
       document.getElementById('filterDay').addEventListener('input', renderAll);
+      document.getElementById('filterSearch').addEventListener('input', renderAll);
 
 
       document.getElementById('exportBtn').addEventListener('click', function () {
@@ -1781,8 +1922,8 @@
       fillYears();
       document.getElementById('date').value = todayISO();
       updateMenuVisibility();
+      renderAllLists();
       renderMenuDishes();
-      fetchAllFromServer();
     })();
   </script>
 </body>
