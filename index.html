@@ -284,6 +284,19 @@
       opacity: 1;
     }
 
+    .sync-indicator {
+      display: none;
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--muted);
+      background: var(--accent-soft);
+      border: 1px solid #c5d9cc;
+      border-radius: 8px;
+      padding: 6px 10px;
+      margin-bottom: 12px;
+    }
+    .sync-indicator.show { display: block; }
+
     .tabs {
       display: flex;
       flex-wrap: nowrap;
@@ -685,6 +698,7 @@
 <body>
   <h1>Бронирование зала</h1>
   <p class="subtitle">Запись банкетов и мероприятий · Ресторан «Посейдон»</p>
+  <div class="sync-indicator" id="syncIndicator">Загрузка данных…</div>
 
   <!-- Брони + информация — один блок сверху -->
   <div class="card">
@@ -942,12 +956,90 @@
 
   <div class="toast" id="toast"></div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script>
     (function () {
       'use strict';
 
-      const STORAGE_KEY = 'venue_bookings_v1';
+      // ——— Общая база данных (Supabase) ———
+      // Ключ ниже — публичный (publishable) ключ, он и должен быть в клиентском коде.
+      // Доступ на чтение/запись открыт всем по ссылке (без логина) — так и было задумано.
+      const SUPABASE_URL = 'https://nyjbrklsgiwvfudmhpon.supabase.co';
+      const SUPABASE_KEY = 'sb_publishable_5XgRHFYkg4SmKE8A97ZkZg_OVzSoS7Q';
+      const TABLE = 'bookings';
+      const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
       const MAX_BOOKINGS = 2000;
+
+      let bookingsCache = [];
+
+      function setSyncIndicator(text, show) {
+        const el = document.getElementById('syncIndicator');
+        if (!el) return;
+        el.textContent = text || '';
+        el.classList.toggle('show', !!show);
+      }
+
+      // Синхронный доступ к текущему локальному кэшу (весь остальной код это и ожидает)
+      function loadBookings() {
+        return bookingsCache;
+      }
+
+      // Полная загрузка с сервера
+      async function fetchAllFromServer() {
+        setSyncIndicator('Загрузка данных…', true);
+        const { data, error } = await sb.from(TABLE).select('data').order('updated_at', { ascending: true });
+        if (error) {
+          console.error('Ошибка загрузки из Supabase:', error);
+          setSyncIndicator('Нет соединения с сервером. Показаны последние загруженные данные.', true);
+          return;
+        }
+        bookingsCache = (data || [])
+          .map(r => r.data)
+          .filter(b => b && typeof b === 'object' && b.id && b.date);
+        setSyncIndicator('', false);
+        renderAllLists();
+        if (typeof renderMenuDishes === 'function') renderMenuDishes();
+      }
+
+      // Запись: обновляем локальный кэш сразу (мгновенный отклик в интерфейсе),
+      // а изменения на сервер отправляем в фоне и синхронизируем с остальными вкладками через realtime.
+      function saveBookings(list) {
+        if (!Array.isArray(list)) return false;
+        const safe = list.slice(0, MAX_BOOKINGS);
+
+        const prevIds = new Set(bookingsCache.map(b => b.id));
+        const nextIds = new Set(safe.map(b => b.id));
+        const toDelete = [...prevIds].filter(id => !nextIds.has(id));
+
+        bookingsCache = safe;
+
+        (async () => {
+          try {
+            if (safe.length) {
+              const rows = safe.map(b => ({ id: b.id, data: b, updated_at: new Date().toISOString() }));
+              const { error: upsertError } = await sb.from(TABLE).upsert(rows, { onConflict: 'id' });
+              if (upsertError) throw upsertError;
+            }
+            if (toDelete.length) {
+              const { error: delError } = await sb.from(TABLE).delete().in('id', toDelete);
+              if (delError) throw delError;
+            }
+          } catch (e) {
+            console.error('Ошибка синхронизации с сервером:', e);
+            showToast('Не удалось сохранить на сервере — проверьте интернет');
+          }
+        })();
+
+        return true;
+      }
+
+      // Realtime: если бронь добавил/изменил/удалил кто-то другой — обновляем у себя
+      sb.channel('bookings-changes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, function () {
+          fetchAllFromServer();
+        })
+        .subscribe();
 
       // ——— Меню из фото ———
       const MENU_DATA = [
@@ -995,20 +1087,6 @@
       // qty state: key = catIndex_itemIndex
       const qtyState = {};
 
-      // ——— Хранение броней ———
-      function loadBookings() {
-        try {
-          const raw = localStorage.getItem(STORAGE_KEY);
-          if (!raw) return [];
-          const data = JSON.parse(raw);
-          if (!Array.isArray(data)) return [];
-          return data.filter(b => b && typeof b === 'object' && b.id && b.date);
-        } catch (e) {
-          console.error('Ошибка чтения:', e);
-          return [];
-        }
-      }
-
       function isDeleted(b) {
         return !!(b && b.deleted);
       }
@@ -1030,25 +1108,6 @@
         return loadBookings()
           .filter(b => isDeleted(b) || isPast(b))
           .sort((a, b) => ((b.date || '') + (b.time || '')).localeCompare((a.date || '') + (a.time || '')));
-      }
-
-      function saveBookings(list) {
-        if (!Array.isArray(list)) return false;
-        try {
-          const safe = list.slice(0, MAX_BOOKINGS);
-          const json = JSON.stringify(safe);
-          localStorage.setItem(STORAGE_KEY, json);
-          if (localStorage.getItem(STORAGE_KEY) !== json) throw new Error('Проверка не прошла');
-          return true;
-        } catch (e) {
-          console.error('Ошибка сохранения:', e);
-          if (e.name === 'QuotaExceededError' || e.code === 22) {
-            alert('Не удалось сохранить: закончилось место в браузере.\nУдалите старые брони или скачайте резервную копию.');
-          } else {
-            alert('Не удалось сохранить данные. Попробуйте ещё раз.');
-          }
-          return false;
-        }
       }
 
       function showToast(text) {
@@ -1922,8 +1981,8 @@
       fillYears();
       document.getElementById('date').value = todayISO();
       updateMenuVisibility();
-      renderAllLists();
       renderMenuDishes();
+      fetchAllFromServer();
     })();
   </script>
 </body>
