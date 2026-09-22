@@ -284,19 +284,6 @@
       opacity: 1;
     }
 
-    .sync-indicator {
-      display: none;
-      text-align: center;
-      font-size: 0.8rem;
-      color: var(--muted);
-      background: var(--accent-soft);
-      border: 1px solid #c5d9cc;
-      border-radius: 8px;
-      padding: 6px 10px;
-      margin-bottom: 12px;
-    }
-    .sync-indicator.show { display: block; }
-
     .tabs {
       display: flex;
       flex-wrap: nowrap;
@@ -698,7 +685,7 @@
 <body>
   <h1>Бронирование зала</h1>
   <p class="subtitle">Запись банкетов и мероприятий · Ресторан «Посейдон»</p>
-  <div class="sync-indicator" id="syncIndicator">Загрузка данных…</div>
+  <p id="cloudStatus" style="text-align:center;font-size:0.75rem;color:var(--muted);margin-bottom:10px;">—</p>
 
   <!-- Брони + информация — один блок сверху -->
   <div class="card">
@@ -956,90 +943,200 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script>
     (function () {
       'use strict';
 
-      // ——— Общая база данных (Supabase) ———
-      // Ключ ниже — публичный (publishable) ключ, он и должен быть в клиентском коде.
-      // Доступ на чтение/запись открыт всем по ссылке (без логина) — так и было задумано.
-      const SUPABASE_URL = 'https://nyjbrklsgiwvfudmhpon.supabase.co';
-      const SUPABASE_KEY = 'sb_publishable_5XgRHFYkg4SmKE8A97ZkZg_OVzSoS7Q';
-      const TABLE = 'bookings';
-      const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-
+      const STORAGE_KEY = 'venue_bookings_v1';
       const MAX_BOOKINGS = 2000;
 
-      let bookingsCache = [];
+      // ——— Облачная синхронизация (Supabase) ———
+      // localStorage остаётся кэшем для мгновенного открытия и офлайн-режима;
+      // Supabase — источник правды между устройствами.
+      const SUPABASE_URL = 'https://svzmsznsfokvzihiyhuh.supabase.co';
+      const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN2em1zem5zZm9rdnppaGl5aHVoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAwNjU2NzQsImV4cCI6MjEwNTY0MTY3NH0.5tYpBgkVT4EXlnvIUwbUdILT0Ckfd12_vTP0yLB25qA';
+      let cloudOnline = navigator.onLine;
+      let cloudSyncing = false;
 
-      function setSyncIndicator(text, show) {
-        const el = document.getElementById('syncIndicator');
+      function sbHeaders(extra) {
+        return Object.assign({
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
+        }, extra || {});
+      }
+
+      function toRow(b) {
+        return {
+          id: String(b.id),
+          occasion: b.occasion || null,
+          client_name: b.clientName || null,
+          date: b.date || null,
+          time: b.time || null,
+          people: b.people != null ? String(b.people) : null,
+          hall: b.hall || null,
+          phone: b.phone || null,
+          menu: b.menu || null,
+          menu_items: (b.menuItems !== undefined ? b.menuItems : null),
+          menu_total: (b.menuTotal !== undefined && b.menuTotal !== null ? Number(b.menuTotal) : null),
+          hot: b.hot || null,
+          hot_time: b.hotTime || null,
+          prepay: (b.prepay != null ? String(b.prepay) : null),
+          comment: b.comment || null,
+          deleted: !!b.deleted,
+          deleted_at: b.deletedAt || null,
+          created: b.created || new Date().toISOString(),
+          updated: b.updated || new Date().toISOString(),
+        };
+      }
+
+      function fromRow(r) {
+        const out = {
+          id: r.id,
+          occasion: r.occasion || '',
+          clientName: r.client_name || '',
+          date: r.date || '',
+          time: r.time || '',
+          people: r.people || '',
+          hall: r.hall || '',
+          phone: r.phone || '',
+          menu: r.menu || '',
+          menuItems: r.menu_items != null ? r.menu_items : null,
+          menuTotal: r.menu_total != null ? r.menu_total : null,
+          hot: r.hot || '',
+          hotTime: r.hot_time || '',
+          prepay: r.prepay != null ? r.prepay : null,
+          comment: r.comment || '',
+          created: r.created || new Date().toISOString(),
+          updated: r.updated || new Date().toISOString(),
+        };
+        if (r.deleted) {
+          out.deleted = true;
+          out.deletedAt = r.deleted_at || out.updated;
+        }
+        return out;
+      }
+
+      function setCloudStatus(text, isError) {
+        const el = document.getElementById('cloudStatus');
         if (!el) return;
-        el.textContent = text || '';
-        el.classList.toggle('show', !!show);
+        el.textContent = text;
+        el.style.color = isError ? '#c45c5c' : '';
       }
 
-      // Синхронный доступ к текущему локальному кэшу (весь остальной код это и ожидает)
-      function loadBookings() {
-        return bookingsCache;
+      async function sbUpsert(booking) {
+        try {
+          const res = await fetch(SUPABASE_URL + '/rest/v1/bookings?on_conflict=id', {
+            method: 'POST',
+            headers: sbHeaders({
+              'Content-Type': 'application/json',
+              Prefer: 'resolution=merge-duplicates,return=minimal',
+            }),
+            body: JSON.stringify([toRow(booking)]),
+          });
+          cloudOnline = res.ok;
+          return res.ok;
+        } catch (e) {
+          cloudOnline = false;
+          return false;
+        }
       }
 
-      // Полная загрузка с сервера
-      async function fetchAllFromServer() {
-        setSyncIndicator('Загрузка данных…', true);
-        const { data, error } = await sb.from(TABLE).select('data').order('updated_at', { ascending: true });
-        if (error) {
-          console.error('Ошибка загрузки из Supabase:', error);
-          setSyncIndicator('Нет соединения с сервером. Показаны последние загруженные данные.', true);
+      async function sbDelete(id) {
+        try {
+          const res = await fetch(
+            SUPABASE_URL + '/rest/v1/bookings?id=eq.' + encodeURIComponent(String(id)),
+            { method: 'DELETE', headers: sbHeaders() }
+          );
+          cloudOnline = res.ok;
+          return res.ok;
+        } catch (e) {
+          cloudOnline = false;
+          return false;
+        }
+      }
+
+      async function sbFetchAll() {
+        try {
+          const res = await fetch(
+            SUPABASE_URL + '/rest/v1/bookings?select=*&order=updated.desc&limit=' + MAX_BOOKINGS,
+            { headers: sbHeaders() }
+          );
+          if (!res.ok) { cloudOnline = false; return null; }
+          cloudOnline = true;
+          return await res.json();
+        } catch (e) {
+          cloudOnline = false;
+          return null;
+        }
+      }
+
+      // Отправить одну запись в облако молча; при неудаче — тихий тост,
+      // локальные данные при этом уже сохранены и не теряются.
+      function pushOne(booking, isDelete) {
+        const p = isDelete ? sbDelete(booking.id) : sbUpsert(booking);
+        p.then(function (ok) {
+          if (!ok) {
+            setCloudStatus('Офлайн — изменения сохранены локально, синк повторится при подключении', true);
+            queuePendingSync();
+          } else {
+            setCloudStatus('Синхронизировано · ' + new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }));
+          }
+        });
+      }
+
+      // Очередь несинканных изменений на случай офлайн-сохранения:
+      // при следующей успешной загрузке/фокусе просто перезаливаем весь
+      // текущий локальный список — при таком масштабе (одно заведение)
+      // это надёжнее сложной очереди операций.
+      let pendingSyncTimer = null;
+      function queuePendingSync() {
+        clearTimeout(pendingSyncTimer);
+        pendingSyncTimer = setTimeout(async function () {
+          if (!navigator.onLine) return;
+          const list = loadBookings();
+          for (const b of list) { await sbUpsert(b); }
+          setCloudStatus('Синхронизировано · ' + new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }));
+        }, 4000);
+      }
+
+      async function initCloudSync() {
+        if (cloudSyncing) return;
+        cloudSyncing = true;
+        setCloudStatus('Синхронизация…');
+        const rows = await sbFetchAll();
+        if (rows == null) {
+          setCloudStatus('Офлайн — показаны локальные данные', true);
+          cloudSyncing = false;
           return;
         }
-        bookingsCache = (data || [])
-          .map(r => r.data)
-          .filter(b => b && typeof b === 'object' && b.id && b.date);
-        setSyncIndicator('', false);
-        renderAllLists();
-        if (typeof renderMenuDishes === 'function') renderMenuDishes();
-      }
-
-      // Запись: обновляем локальный кэш сразу (мгновенный отклик в интерфейсе),
-      // а изменения на сервер отправляем в фоне и синхронизируем с остальными вкладками через realtime.
-      function saveBookings(list) {
-        if (!Array.isArray(list)) return false;
-        const safe = list.slice(0, MAX_BOOKINGS);
-
-        const prevIds = new Set(bookingsCache.map(b => b.id));
-        const nextIds = new Set(safe.map(b => b.id));
-        const toDelete = [...prevIds].filter(id => !nextIds.has(id));
-
-        bookingsCache = safe;
-
-        (async () => {
-          try {
-            if (safe.length) {
-              const rows = safe.map(b => ({ id: b.id, data: b, updated_at: new Date().toISOString() }));
-              const { error: upsertError } = await sb.from(TABLE).upsert(rows, { onConflict: 'id' });
-              if (upsertError) throw upsertError;
+        const remote = rows.map(fromRow);
+        const local = loadBookings();
+        const map = new Map();
+        remote.forEach(function (b) { map.set(String(b.id), b); });
+        const toPush = [];
+        local.forEach(function (b) {
+          const ex = map.get(String(b.id));
+          if (!ex) {
+            map.set(String(b.id), b);
+            toPush.push(b);
+          } else {
+            const exT = Date.parse(ex.updated || ex.created || 0) || 0;
+            const locT = Date.parse(b.updated || b.created || 0) || 0;
+            if (locT > exT) {
+              map.set(String(b.id), b);
+              toPush.push(b);
             }
-            if (toDelete.length) {
-              const { error: delError } = await sb.from(TABLE).delete().in('id', toDelete);
-              if (delError) throw delError;
-            }
-          } catch (e) {
-            console.error('Ошибка синхронизации с сервером:', e);
-            showToast('Не удалось сохранить на сервере — проверьте интернет');
           }
-        })();
-
-        return true;
+        });
+        const merged = Array.from(map.values());
+        saveBookings(merged);
+        for (const b of toPush) { await sbUpsert(b); }
+        renderAllLists();
+        setCloudStatus('Синхронизировано · ' + new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }));
+        cloudSyncing = false;
       }
 
-      // Realtime: если бронь добавил/изменил/удалил кто-то другой — обновляем у себя
-      sb.channel('bookings-changes')
-        .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, function () {
-          fetchAllFromServer();
-        })
-        .subscribe();
+      window.addEventListener('online', function () { initCloudSync(); });
 
       // ——— Меню из фото ———
       const MENU_DATA = [
@@ -1087,6 +1184,20 @@
       // qty state: key = catIndex_itemIndex
       const qtyState = {};
 
+      // ——— Хранение броней ———
+      function loadBookings() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (!raw) return [];
+          const data = JSON.parse(raw);
+          if (!Array.isArray(data)) return [];
+          return data.filter(b => b && typeof b === 'object' && b.id && b.date);
+        } catch (e) {
+          console.error('Ошибка чтения:', e);
+          return [];
+        }
+      }
+
       function isDeleted(b) {
         return !!(b && b.deleted);
       }
@@ -1108,6 +1219,25 @@
         return loadBookings()
           .filter(b => isDeleted(b) || isPast(b))
           .sort((a, b) => ((b.date || '') + (b.time || '')).localeCompare((a.date || '') + (a.time || '')));
+      }
+
+      function saveBookings(list) {
+        if (!Array.isArray(list)) return false;
+        try {
+          const safe = list.slice(0, MAX_BOOKINGS);
+          const json = JSON.stringify(safe);
+          localStorage.setItem(STORAGE_KEY, json);
+          if (localStorage.getItem(STORAGE_KEY) !== json) throw new Error('Проверка не прошла');
+          return true;
+        } catch (e) {
+          console.error('Ошибка сохранения:', e);
+          if (e.name === 'QuotaExceededError' || e.code === 22) {
+            alert('Не удалось сохранить: закончилось место в браузере.\nУдалите старые брони или скачайте резервную копию.');
+          } else {
+            alert('Не удалось сохранить данные. Попробуйте ещё раз.');
+          }
+          return false;
+        }
       }
 
       function showToast(text) {
@@ -1715,9 +1845,11 @@
             return;
           }
           if (!confirm('Вы точно хотите удалить запись?\nОна попадёт в архив.')) return;
+          let changedBooking = null;
           const list = loadBookings().map(function (x) {
             if (String(x.id) === String(id)) {
-              return Object.assign({}, x, { deleted: true, deletedAt: new Date().toISOString() });
+              changedBooking = Object.assign({}, x, { deleted: true, deletedAt: new Date().toISOString(), updated: new Date().toISOString() });
+              return changedBooking;
             }
             return x;
           });
@@ -1725,6 +1857,7 @@
             if (String(document.getElementById('editId').value) === String(id)) clearEditMode();
             renderAllLists();
             showToast('Бронь перенесена в архив');
+            if (changedBooking) pushOne(changedBooking, false);
           }
           return;
         }
@@ -1734,11 +1867,14 @@
           e.preventDefault();
           const id = restoreBtn.getAttribute('data-id');
           if (!id) return;
+          let restoredBooking = null;
           const list = loadBookings().map(function (x) {
             if (String(x.id) === String(id)) {
               const copy = Object.assign({}, x);
               delete copy.deleted;
               delete copy.deletedAt;
+              copy.updated = new Date().toISOString();
+              restoredBooking = copy;
               return copy;
             }
             return x;
@@ -1746,6 +1882,7 @@
           if (saveBookings(list)) {
             renderAllLists();
             showToast('Бронь восстановлена');
+            if (restoredBooking) pushOne(restoredBooking, false);
           }
           return;
         }
@@ -1760,6 +1897,7 @@
           if (saveBookings(next)) {
             renderAllLists();
             showToast('Запись удалена навсегда');
+            pushOne({ id: id }, true);
           }
           return;
         }
@@ -1907,6 +2045,7 @@
           renderAllLists();
           showToast(editId ? 'Изменения сохранены' : 'Бронь сохранена');
           flashSaveIndicator();
+          pushOne(booking, false);
         }
       });
 
@@ -1967,7 +2106,11 @@
             }
             if (saveBookings(clean)) {
               renderAllLists();
-              showToast('Данные загружены (' + clean.length + ')');
+              showToast('Данные загружены (' + clean.length + '), синхронизация…');
+              (async function () {
+                for (const b of clean) { await sbUpsert(b); }
+                setCloudStatus('Синхронизировано · ' + new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }));
+              })();
             }
           } catch (err) {
             alert('Не удалось прочитать файл.\nНужен JSON-файл резервной копии.');
@@ -1981,8 +2124,9 @@
       fillYears();
       document.getElementById('date').value = todayISO();
       updateMenuVisibility();
+      renderAllLists();
       renderMenuDishes();
-      fetchAllFromServer();
+      initCloudSync();
     })();
   </script>
 </body>
